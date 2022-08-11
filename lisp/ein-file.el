@@ -22,24 +22,21 @@
 
 ;;; Commentary:
 
-(defvar *ein:file-buffername-template* "'/ein:%s:%s")
+(defvar *ein:file-buffername-template* "%s")
 (ein:deflocal ein:content-file-buffer--content nil)
 
 ;; (push '("^ein:.*" . ein:content-file-handler)
 ;;       file-name-handler-alist)
 
-(defun ein:file-buffer-name (urlport path)
-  (format *ein:file-buffername-template*
-          urlport
-          path))
+(defun ein:file-buffer-name (path)
+  (format path))
 
 (defun ein:file-open (url-or-port path)
   (interactive (ein:notebooklist-parse-nbpath (ein:notebooklist-ask-path "file")))
   (ein:content-query-contents url-or-port path #'ein:file-open-finish nil))
 
 (defun ein:file-open-finish (content)
-  (with-current-buffer (get-buffer-create (ein:file-buffer-name (ein:$content-url-or-port content)
-                                                                (ein:$content-path content)))
+  (with-current-buffer (get-buffer-create (ein:file-buffer-name (ein:$content-path content)))
     (setq ein:content-file-buffer--content content)
     (let ((raw-content (ein:$content-raw-content content)))
       (if (eq system-type 'windows-nt)
@@ -52,12 +49,11 @@
     (ein:log 'verbose "Opened file %s" (ein:$content-name content))
     (set-buffer-modified-p nil)
     (goto-char (point-min))
-    (pop-to-buffer (buffer-name))))
+    (pop-to-buffer-same-window (buffer-name))))
 
 (defun ein:content-file-save ()
   (setf (ein:$content-raw-content ein:content-file-buffer--content) (buffer-string))
   (ein:content-save ein:content-file-buffer--content)
-  (set-buffer-modified-p nil)
-  t)
+  nil)
 
 (provide 'ein-file)
