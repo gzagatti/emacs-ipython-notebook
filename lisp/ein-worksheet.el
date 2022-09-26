@@ -84,19 +84,27 @@ Normalize `buffer-undo-list' by removing extraneous details, and
 update the ein:%which-cell% ledger that associates changes in
 `buffer-undo-list' with individual cells."
   (when (and buffer-undo-list (listp buffer-undo-list))
-    (setq buffer-undo-list (cl-delete-if (lambda (u) (or (numberp u) (and (consp u) (markerp (car u))))) buffer-undo-list))
+    (setq buffer-undo-list
+          (cl-delete-if
+           (lambda (u) (or (numberp u) (and (consp u) (markerp (car u)))))
+           buffer-undo-list))
     (let ((fill (- (length buffer-undo-list) (length ein:%which-cell%))))
       (if (< fill 0)
           (progn
-            (ein:log 'debug "truncating %s to %s: %S -> %S" (length ein:%which-cell%) (length buffer-undo-list) ein:%which-cell% (nthcdr (- fill)  ein:%which-cell%))
+            (ein:log 'debug "truncating %s to %s: %S -> %S"
+                     (length ein:%which-cell%) (length buffer-undo-list)
+                     ein:%which-cell% (nthcdr (- fill) ein:%which-cell%))
             (setq ein:%which-cell% (nthcdr (- fill)  ein:%which-cell%)))
         (when (> fill 0)
-          (let ((cell-id (aif (ein:worksheet-get-current-cell :noerror t)
-                             (ein:worksheet--unique-enough-cell-id it) nil)))
-            (let ((ein:log-print-level 5))
-              (ein:log 'debug "which-cell (%s . %s) %s %S fill=%s" change-beg change-end cell-id (cl-subseq buffer-undo-list 0 fill) fill))
+          (let ((cell-id (awhen (ein:worksheet-get-current-cell :noerror t)
+                           (ein:worksheet--unique-enough-cell-id it))))
             (setq ein:%which-cell%
-                  (nconc (make-list fill cell-id) ein:%which-cell%))))))))
+                  (nconc (make-list fill cell-id) ein:%which-cell%))
+            (let ((ein:log-print-level 5))
+              (ein:log 'debug "which-cell (%s . %s) %s %S fill=%s"
+                       change-beg change-end cell-id
+                       (cl-subseq buffer-undo-list 0 fill)
+                       fill))))))))
 
 (defun ein:worksheet--next-cell-start (cell)
   (let ((cell1 (ein:cell-next cell)))
@@ -439,10 +447,10 @@ Shift in list parlance means removing the front."
   (with-current-buffer (ein:worksheet--get-buffer ws)
     (setq buffer-local-enable-undo ein:worksheet-enable-undo)
     (let ((undo-binding (key-binding (kbd "C-/"))))
-      (if buffer-local-enable-undo
-          (unless (eq undo-binding 'undo)
-            (setq buffer-local-enable-undo nil)
-            (ein:display-warning-once (format "Disabling undo for %s" undo-binding)))))
+      (when (and buffer-local-enable-undo
+                 (not (eq undo-binding 'undo)))
+        (ein:log 'info "ein:worksheet-undo-setup: suspect undo `%s`."
+                 undo-binding)))
     (ein:worksheet-reinstall-undo-hooks ws)
     (if buffer-local-enable-undo
         (progn
@@ -1033,21 +1041,23 @@ Do not clear input prompts when the prefix argument is given."
                  ,(when current-prefix-arg
                     (prog1 (read-char-choice "[RET]all [a]bove [b]elow: " (list ?\r ?a ?b))
                       (message "")))))
-  (if (ein:codecell-p cell)
-      (ein:kernel-when-ready
-       (slot-value ws 'kernel)
-       (apply-partially
-        (lambda (ws* cell* batch* _kernel)
-          (cl-case batch*
-            (?\r (ein:worksheet-execute-all-cells ws*))
-            (?a (ein:worksheet-execute-all-cells ws* :above cell*))
-            (?b (ein:worksheet-execute-all-cells ws* :below cell*))
-            (t (ein:cell-execute cell*)
-               (setf (oref ws* :dirty) t)
-               (ein:worksheet--unshift-undo-list cell*))))
-        ws cell batch))
-    (message "ein:worksheet-execute-cell: not a code cell"))
-  cell)
+  (cond ((ein:codecell-p cell)
+	 (ein:kernel-when-ready
+	  (slot-value ws 'kernel)
+	  (apply-partially
+	   (lambda (ws* cell* batch* _kernel)
+	     (cl-case batch*
+	       (?\r (ein:worksheet-execute-all-cells ws*))
+	       (?a (ein:worksheet-execute-all-cells ws* :above cell*))
+	       (?b (ein:worksheet-execute-all-cells ws* :below cell*))
+	       (t (ein:cell-execute cell*)
+		  (setf (oref ws* :dirty) t)
+		  (ein:worksheet--unshift-undo-list cell*))))
+	   ws cell batch)))
+	((ein:markdowncell-p cell)
+         (when (fboundp 'math-preview-at-point)
+           (math-preview-at-point)))
+      (t (message "ein:worksheet-execute-cell: not a code cell"))))
 
 (defun ein:worksheet-execute-cell-and-goto-next (ws cell &optional insert)
   "Execute cell at point if it is a code cell and move to the
